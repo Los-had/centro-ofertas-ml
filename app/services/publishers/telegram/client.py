@@ -28,11 +28,14 @@ class TelegramClient:
         chat_id: str,
         text: str,
     ):
+
         response = httpx.post(
-            f"{self.BASE_URL}{self.token}/sendMessage",
+            f"{self.BASE_URL}"
+            f"{self.token}/sendMessage",
             json={
                 "chat_id": chat_id,
                 "text": text,
+                "disable_web_page_preview": False,
             },
             timeout=20,
         )

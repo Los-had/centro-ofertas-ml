@@ -1,3 +1,6 @@
+import random
+import time
+
 import httpx
 
 from app.core.config import (
@@ -6,14 +9,30 @@ from app.core.config import (
 )
 
 
+class MercadoLivreError(Exception):
+    pass
+
+
+class MercadoLivreRateLimitError(MercadoLivreError):
+    pass
+
+
 class MercadoLivreClient:
 
     BASE_URL = "https://api.mercadolibre.com"
 
-    def __init__(self, access_token: str | None = None):
+    def __init__(
+        self,
+        access_token: str | None = None,
+    ):
         self.access_token = (
             access_token
             or ML_ACCESS_TOKEN
+        )
+
+        self.client = httpx.Client(
+            timeout=20,
+            headers=self._headers(),
         )
 
     def _headers(self):
@@ -28,43 +47,75 @@ class MercadoLivreClient:
 
         return headers
 
-    def get_item(self, item_id: str):
-        response = httpx.get(
-            f"{self.BASE_URL}/items/{item_id}",
-            headers=self._headers(),
-            timeout=20,
+    def _request(
+        self,
+        method: str,
+        path: str,
+        **kwargs,
+    ):
+        max_retries = 3
+
+        for attempt in range(max_retries):
+
+            response = self.client.request(
+                method,
+                f"{self.BASE_URL}{path}",
+                **kwargs,
+            )
+
+            if response.status_code == 429:
+
+                if attempt == max_retries - 1:
+                    raise MercadoLivreRateLimitError(
+                        "Mercado Livre retornou 429."
+                    )
+
+                delay = (
+                    2 ** attempt
+                    + random.uniform(0, 1)
+                )
+
+                time.sleep(delay)
+
+                continue
+
+            if response.status_code >= 400:
+                raise MercadoLivreError(
+                    f"Mercado Livre HTTP "
+                    f"{response.status_code}: "
+                    f"{response.text}"
+                )
+
+            return response.json()
+
+        raise MercadoLivreError(
+            "Falha inesperada na requisição."
         )
-
-        response.raise_for_status()
-
-        return response.json()
 
     def search_items(
         self,
         query: str,
         limit: int = 20,
     ):
-        response = httpx.get(
-            f"{self.BASE_URL}/sites/{ML_SITE_ID}/search",
+        limit = min(limit, 50)
+
+        return self._request(
+            "GET",
+            f"/sites/{ML_SITE_ID}/search",
             params={
                 "q": query,
-                "limit": min(limit, 50),
+                "limit": limit,
             },
-            headers=self._headers(),
-            timeout=20,
         )
 
-        response.raise_for_status()
-
-        return response.json()
-
-    def get_category(self, category_id: str):
-        response = httpx.get(
-            f"{self.BASE_URL}/categories/{category_id}",
-            headers=self._headers(),
-            timeout=20,
+    def get_item(
+        self,
+        item_id: str,
+    ):
+        return self._request(
+            "GET",
+            f"/items/{item_id}",
         )
 
-        response.raise_for_status()
-
-        return response.json()
+    def close(self):
+        self.client.close()

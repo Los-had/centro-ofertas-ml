@@ -231,6 +231,7 @@ def evaluate_product(
     return deal
 
 
+
 @router.get("/mercadolivre/search")
 def search_mercadolivre(
     q: str,
@@ -240,97 +241,32 @@ def search_mercadolivre(
 
     client = MercadoLivreClient()
 
-    return client.search_items(
-        query=q,
-        limit=limit,
-    )
+    try:
+        return client.search_items(
+            query=q,
+            limit=limit,
+        )
+    finally:
+        client.close()
 
 @router.post("/mercadolivre/import/{item_id}")
 def import_mercadolivre_item(
     item_id: str,
     db: Session = Depends(get_db),
 ):
-    from app.services.mercadolivre import MercadoLivreClient
-
-    client = MercadoLivreClient()
-
-    item = client.get_item(item_id)
-
-    category_id = item.get("category_id")
-
-    category = db.scalar(
-        select(Category).where(
-            Category.slug == f"ml-{category_id}"
-        )
+    from app.services.mercadolivre.collector import (
+        import_item,
     )
 
-    if not category:
-        category = Category(
-            name=f"Mercado Livre {category_id}",
-            slug=f"ml-{category_id}",
-        )
-
-        db.add(category)
-        db.commit()
-        db.refresh(category)
-
-    product = db.scalar(
-        select(Product).where(
-            Product.ml_item_id == item_id
-        )
+    product = import_item(
+        db,
+        item_id,
     )
-
-    if product:
-        product.current_price = item.get(
-            "price",
-            product.current_price,
-        )
-
-    else:
-        pictures = item.get("pictures") or []
-
-        image_url = (
-            pictures[0].get("url")
-            if pictures
-            else None
-        )
-
-        product = Product(
-            ml_item_id=item_id,
-            title=item.get("title", "Produto"),
-            url=item.get("permalink"),
-            image_url=image_url,
-            current_price=item.get("price", 0),
-            original_price=item.get(
-                "original_price"
-            ),
-            sold_quantity=item.get(
-                "sold_quantity",
-                0,
-            ) or 0,
-            stock_quantity=item.get(
-                "available_quantity"
-            ),
-            category_id=category.id,
-        )
-
-        db.add(product)
-
-    db.commit()
-    db.refresh(product)
-
-    price = PriceHistory(
-        product_id=product.id,
-        price=product.current_price,
-    )
-
-    db.add(price)
-    db.commit()
 
     return {
         "status": "imported",
         "product_id": product.id,
-        "ml_item_id": item_id,
         "title": product.title,
         "price": product.current_price,
+        "ml_item_id": product.ml_item_id,
     }
