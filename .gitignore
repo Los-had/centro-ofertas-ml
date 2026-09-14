@@ -13,3 +13,4 @@ __pycache__/
 .idea/
 
 .DS_Store
+whatsapp_session/
